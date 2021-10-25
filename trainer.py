@@ -2,13 +2,74 @@ import logging
 import wandb
 import numpy as np
 import tensorflow as tf
-
+from tensorflow import keras
 from writer import Writer
 from utils import general_utils as utils
 
 
 def id_loss_func(y_gt, y_pred):
     return tf.reduce_mean(tf.keras.losses.MAE(y_gt, y_pred))
+
+def perc_model (vgg_model):
+    output1 = vgg_model.layers[1].output
+    output2 = vgg_model.layers[4].output
+    output3 = vgg_model.layers[7].output
+    output4 = vgg_model.layers[12].output
+    output5 = vgg_model.layers[17].output
+    perceptual_model = keras.Model(inputs=vgg_model.input,outputs=[output1,output2,output3,output4,output5])
+    return perceptual_model
+
+
+def perc_style_loss(image: tf.Tensor, output: tf.Tensor,perceptual_model: tf.keras.Model) -> tf.Tensor:
+    image_v = keras.applications.vgg19.preprocess_input(image*255.0)
+    output_v = keras.applications.vgg19.preprocess_input(output*255.0)
+
+    output_f1, output_f2, output_f3, output_f4, output_f5 = perceptual_model(output_v) 
+    image_f1, image_f2, image_f3, image_f4, image_f5 = perceptual_model(image_v)
+
+    perc_f1 = tf.reduce_mean(tf.reduce_mean(tf.abs(image_f1-output_f1),axis=(1,2,3)))
+    perc_f2 = tf.reduce_mean(tf.reduce_mean(tf.abs(image_f2-output_f2),axis=(1,2,3)))
+    perc_f3 = tf.reduce_mean(tf.reduce_mean(tf.abs(image_f3-output_f3),axis=(1,2,3)))
+    perc_f4 = tf.reduce_mean(tf.reduce_mean(tf.abs(image_f4-output_f4),axis=(1,2,3)))
+    perc_f5 = tf.reduce_mean(tf.reduce_mean(tf.abs(image_f5-output_f5),axis=(1,2,3)))
+    perceptual_loss = perc_f1 + perc_f2 + perc_f3 + perc_f4 + perc_f5
+    # perceptual_loss /= 5 
+
+    img_gram_f1 = gram_matrix(image_f1)
+    out_gram_f1 = gram_matrix(output_f1)
+    img_gram_f2 = gram_matrix(image_f2)
+    out_gram_f2 = gram_matrix(output_f2)
+    img_gram_f3 = gram_matrix(image_f3)
+    out_gram_f3 = gram_matrix(output_f3)
+    img_gram_f4 = gram_matrix(image_f4)
+    out_gram_f4 = gram_matrix(output_f4)
+    img_gram_f5 = gram_matrix(image_f5)
+    out_gram_f5 = gram_matrix(output_f5)
+
+
+    ratio = (image_f3.shape[-1]**2)*(image_f3.shape[-1]*(image_f3.shape[1]*image_f3.shape[2])**2)
+
+    style_loss = tf.reduce_mean(tf.reduce_sum(tf.abs(img_gram_f3-out_gram_f3),axis=(1,2))/ratio)
+
+    ratio = (image_f1.shape[-1]**2)*(image_f1.shape[-1]*(image_f1.shape[1]*image_f1.shape[2])**2)
+
+    style_loss += tf.reduce_mean(tf.reduce_sum(tf.abs(img_gram_f1-out_gram_f1),axis=(1,2))/ratio)
+
+    ratio = (image_f2.shape[-1]**2)*(image_f2.shape[-1]*(image_f2.shape[1]*image_f2.shape[2])**2)
+
+    style_loss += tf.reduce_mean(tf.reduce_sum(tf.abs(img_gram_f2-out_gram_f2),axis=(1,2))/ratio)
+
+    ratio = (image_f4.shape[-1]**2)*(image_f4.shape[-1]*(image_f4.shape[1]*image_f4.shape[2])**2)
+
+    style_loss += tf.reduce_mean(tf.reduce_sum(tf.abs(img_gram_f4-out_gram_f4),axis=(1,2))/ratio)
+
+    ratio = (image_f5.shape[-1]**2)*(image_f5.shape[-1]*(image_f5.shape[1]*image_f5.shape[2])**2)
+
+    style_loss += tf.reduce_mean(tf.reduce_sum(tf.abs(img_gram_f5-out_gram_f5),axis=(1,2))/ratio)
+
+    style_loss /= 5 
+
+    return perceptual_loss, style_loss
 
 
 class Trainer(object):
@@ -24,7 +85,9 @@ class Trainer(object):
         self.l_w_ll=[]
           #WandB
         wandb.init(project="celeba_with_ws_edited_final")
-
+        vgg19_model = keras.applications.VGG19(include_top=False,input_shape=(256,256,3))
+        perceptual_model = perc_model(vgg19_model)
+        
         self.model = model
         self.data_loader = data_loader
         self.attr_test, self.id_test, self.mask_test, self.real_w_test, self.real_test, self.matching_ws_test = self.data_loader.get_batch(is_cross=False)
@@ -195,7 +258,10 @@ class Trainer(object):
                     landmarks_loss = self.lambda_landmarks * \
                                      tf.reduce_mean(tf.keras.losses.MSE(src_landmarks, dst_landmarks))
                 self.lnd_ll.append(landmarks_loss)
-           
+             
+            
+            perceptual_loss, style_loss = perc_style_loss(id_img,output,perceptual_model)
+            print(perceptual_loss)
             l_w_loss = self.lambda_l_w * tf.reduce_mean(tf.keras.losses.MSE(matching_ws, fake_w))
             print(l_w_loss)
             self.l_w_ll.append(l_w_loss)
@@ -216,12 +282,13 @@ class Trainer(object):
 
 
             g_gan_loss = g_w_gan_loss
-
+                
             total_g_not_gan_loss = id_loss \
                                    + landmarks_loss \
                                    + pixel_loss \
                                    + w_loss \
-                                   + l_w_loss
+                                   + l_w_loss \
+                                   + perceptual_loss
             self.total_ll.append(total_g_not_gan_loss)
             self.logger.info(f'total G (not gan) loss is {total_g_not_gan_loss:.3f}')
             self.logger.info(f'G gan loss is {g_gan_loss:.3f}')
