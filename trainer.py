@@ -35,41 +35,7 @@ def perc_style_loss(image: tf.Tensor, output: tf.Tensor,perceptual_model: tf.ker
     perceptual_loss = perc_f1 + perc_f2 + perc_f3 + perc_f4 + perc_f5
     # perceptual_loss /= 5 
 
-    img_gram_f1 = gram_matrix(image_f1)
-    out_gram_f1 = gram_matrix(output_f1)
-    img_gram_f2 = gram_matrix(image_f2)
-    out_gram_f2 = gram_matrix(output_f2)
-    img_gram_f3 = gram_matrix(image_f3)
-    out_gram_f3 = gram_matrix(output_f3)
-    img_gram_f4 = gram_matrix(image_f4)
-    out_gram_f4 = gram_matrix(output_f4)
-    img_gram_f5 = gram_matrix(image_f5)
-    out_gram_f5 = gram_matrix(output_f5)
-
-
-    ratio = (image_f3.shape[-1]**2)*(image_f3.shape[-1]*(image_f3.shape[1]*image_f3.shape[2])**2)
-
-    style_loss = tf.reduce_mean(tf.reduce_sum(tf.abs(img_gram_f3-out_gram_f3),axis=(1,2))/ratio)
-
-    ratio = (image_f1.shape[-1]**2)*(image_f1.shape[-1]*(image_f1.shape[1]*image_f1.shape[2])**2)
-
-    style_loss += tf.reduce_mean(tf.reduce_sum(tf.abs(img_gram_f1-out_gram_f1),axis=(1,2))/ratio)
-
-    ratio = (image_f2.shape[-1]**2)*(image_f2.shape[-1]*(image_f2.shape[1]*image_f2.shape[2])**2)
-
-    style_loss += tf.reduce_mean(tf.reduce_sum(tf.abs(img_gram_f2-out_gram_f2),axis=(1,2))/ratio)
-
-    ratio = (image_f4.shape[-1]**2)*(image_f4.shape[-1]*(image_f4.shape[1]*image_f4.shape[2])**2)
-
-    style_loss += tf.reduce_mean(tf.reduce_sum(tf.abs(img_gram_f4-out_gram_f4),axis=(1,2))/ratio)
-
-    ratio = (image_f5.shape[-1]**2)*(image_f5.shape[-1]*(image_f5.shape[1]*image_f5.shape[2])**2)
-
-    style_loss += tf.reduce_mean(tf.reduce_sum(tf.abs(img_gram_f5-out_gram_f5),axis=(1,2))/ratio)
-
-    style_loss /= 5 
-
-    return perceptual_loss, style_loss
+    return perceptual_loss
 
 
 class Trainer(object):
@@ -83,10 +49,11 @@ class Trainer(object):
         self.total_ll=[]
         self.pixel_ll=[]
         self.l_w_ll=[]
+        self.perceptual_ll=[]
           #WandB
         wandb.init(project="celeba_with_ws_edited_final")
-        vgg19_model = keras.applications.VGG19(include_top=False,input_shape=(256,256,3))
-        perceptual_model = perc_model(vgg19_model)
+        self.vgg19_model = keras.applications.VGG19(include_top=False,input_shape=(256,256,3))
+        self.perceptual_model = perc_model(self.vgg19_model)
         
         self.model = model
         self.data_loader = data_loader
@@ -201,10 +168,9 @@ class Trainer(object):
 
 
         attr_img, id_img, id_mask, real_w, real_img, matching_ws = self.data_loader.get_batch(is_cross=self.is_cross_epoch)
-        # print('matching_ws:' , type(matching_ws))
+
         # Forward that does not require grads
         id_embedding = self.model.G.id_encoder(id_mask)
-        print('id_embeding',id_embedding.shape)
         id_embedding_for_loss = self.model.G.pretrained_id_encoder(id_mask)
         src_landmarks = self.model.G.landmarks(id_img)  
         attr_input = attr_img
@@ -213,13 +179,9 @@ class Trainer(object):
 
             attr_out = self.model.G.attr_encoder(attr_input)
             attr_embedding = attr_out
-            print('attr_embedding',attr_embedding.shape)
             z_tag = tf.concat([id_embedding, attr_embedding], -1)
             w = self.model.G.latent_spaces_mapping(z_tag)
             fake_w = w[:, 0, :]
-
-            # self.logger.info(
-            #     f'w stats- mean: {tf.reduce_mean(tf.abs(fake_w)):.5f}, variance: {tf.math.reduce_variance(fake_w):.5f}')
 
             pred = self.model.G.stylegan_s(w)
 
@@ -260,10 +222,9 @@ class Trainer(object):
                 self.lnd_ll.append(landmarks_loss)
              
             
-            perceptual_loss, style_loss = perc_style_loss(id_img,output,perceptual_model)
+            perceptual_loss = 0.1 * perc_style_loss(id_img,pred,self.perceptual_model)
             print(perceptual_loss)
             l_w_loss = self.lambda_l_w * tf.reduce_mean(tf.keras.losses.MSE(matching_ws, fake_w))
-            print(l_w_loss)
             self.l_w_ll.append(l_w_loss)
 
             if not self.is_cross_epoch and self.args.pixel_loss:
@@ -296,10 +257,10 @@ class Trainer(object):
             
         if self.num_epoch%100==0:
             wandb.log({"epoch": self.num_epoch, "id_loss": np.mean(self.id_ll),"Lnd_loss": np.mean(self.lnd_ll),
-            "l1_loss": np.mean(self.l1_ll),"pixel_loss":np.mean(self.pixel_ll),"l_w_loss":np.mean(self.l_w_ll),
+            "l1_loss": np.mean(self.l1_ll),"pixel_loss":np.mean(self.pixel_ll),"l_w_loss":np.mean(self.l_w_ll),"perceptual_loss":np.mean(self.perceptual_ll),
             "total_g_not_gan_loss":np.mean(self.total_ll),"g_w_gan_loss":g_w_gan_loss,
              "gt_img": wandb.Image(id_img[0]) ,  "mask_img": wandb.Image(id_mask[0]) ,  "pred_img": wandb.Image(pred[0])})
-            # self.model.my_save(f'_my_save_epoch_{self.num_epoch}')
+ 
 
             self.id_ll=[]
             self.lnd_ll=[]
@@ -307,6 +268,7 @@ class Trainer(object):
             self.pixel_ll=[]
             self.total_ll=[]
             self.l_w_ll=[]
+            self.perceptual_ll=[]
 
         
         if total_g_not_gan_loss != 0:
