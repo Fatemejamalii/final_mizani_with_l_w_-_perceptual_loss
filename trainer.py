@@ -51,7 +51,7 @@ class Trainer(object):
         self.l_w_ll=[]
         self.perceptual_ll=[]
           #WandB
-        wandb.init(project="celeba_with_ws_edited_final")
+        wandb.init(project="test")
         self.vgg19_model = keras.applications.VGG19(include_top=False,input_shape=(256,256,3))
         self.perceptual_model = perc_model(self.vgg19_model)
         
@@ -98,15 +98,9 @@ class Trainer(object):
         self.lambda_landmarks = 0.001
         self.r1_gamma = 10
         
-
-        if self.num_epoch <1000:
-            self.lambda_id = 1
-            self.lambda_l_w = 1
-            self.lambda_landmarks = 0.1
-        if self.num_epoch>1000:
-            self.lambda_id = 15
-            self.lambda_l_w = 10
-            self.lambda_landmarks = 0.1
+        self.lambda_id = 15
+        self.lambda_l_w = 10
+        self.lambda_landmarks = 0.1
             
 
         # Test
@@ -308,10 +302,7 @@ class Trainer(object):
         utils.save_image(self.mask_test[0], self.args.images_results.joinpath(f'first_id_test.png'))
         utils.save_image(self.attr_test[0], self.args.images_results.joinpath(f'first_attr_test.png'))
         utils.save_image(self.id_test[0], self.args.images_results.joinpath(f'first_gt_test.png'))
-        utils.save_image(image_test[1], self.args.images_results.joinpath(f'{self.num_epoch}_second_prediction_test.png'))
-        utils.save_image(self.mask_test[1], self.args.images_results.joinpath(f'second_id_test.png'))
-        utils.save_image(self.attr_test[1], self.args.images_results.joinpath(f'second_attr_test.png'))
-        utils.save_image(self.id_test[1], self.args.images_results.joinpath(f'second_gt_test.png'))
+
 
 
 
