@@ -217,6 +217,7 @@ class Trainer(object):
              
             
             perceptual_loss = 0.1 * perc_style_loss(id_img,pred,self.perceptual_model)
+            self.perceptual_ll.append(perceptual_loss)
             print(perceptual_loss)
             l_w_loss = self.lambda_l_w * tf.reduce_mean(tf.keras.losses.MSE(matching_ws, fake_w))
             self.l_w_ll.append(l_w_loss)
